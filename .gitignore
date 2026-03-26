@@ -1,0 +1,55 @@
+# =========================
+# ENV FILES (IMPORTANT 🔐)
+# =========================
+.env
+.env.*
+Frontend/.env
+Backend/.env
+
+# =========================
+# NODE MODULES
+# =========================
+node_modules/
+Frontend/node_modules/
+Backend/node_modules/
+
+# =========================
+# BUILD FILES
+# =========================
+dist/
+build/
+Frontend/dist/
+Backend/dist/
+
+# =========================
+# LOG FILES
+# =========================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# OS FILES
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE FILES
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# TEMP FILES
+# =========================
+*.tmp
+*.temp
+
+# =========================
+# MISC
+# =========================
+coverage/
+.cache/
