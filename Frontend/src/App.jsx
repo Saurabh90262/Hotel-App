@@ -878,7 +878,7 @@ const Hero = ({ openBooking }) => {
             }}
             className="shimmer"
           >
-            Frontier
+            Frontier Prime
           </h1>
 
           <div
@@ -3055,6 +3055,9 @@ const AdminPanel = () => {
   const [checkoutList, setCheckoutList] = useState([]);
   const [showCheckinModal, setShowCheckinModal] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  
+  // State to track if we are viewing a full-screen list instead of the dashboard
+  const [fullScreenList, setFullScreenList] = useState(null); // null, 'today', 'confirmed', or 'cancelled'
 
   const login = async (e) => {
     e.preventDefault();
@@ -3113,7 +3116,7 @@ const AdminPanel = () => {
   };
 
   const cancelBooking = async (bookingId) => {
-    if (!window.confirm(`⚠️ Cancel booking ${bookingId}? This will delete it and email an apology.`)) return;
+    if (!window.confirm(`⚠️ Cancel booking ${bookingId}? This will cancel the reservation and email an apology.`)) return;
     try {
       const res = await fetch(`http://localhost:5000/api/admin/bookings/${bookingId}`, {
         method: "DELETE",
@@ -3121,7 +3124,9 @@ const AdminPanel = () => {
       });
       const d = await res.json();
       if (d.success) {
-        setBookings((prev) => prev.filter((b) => b.bookingId !== bookingId));
+        // Update local state without deleting the row entirely (updates status to cancelled)
+        const updater = (prev) => prev.map((b) => (b.bookingId === bookingId ? d.booking : b));
+        setBookings(updater);
         setCheckinList((prev) => prev.filter((b) => b.bookingId !== bookingId));
         setCheckoutList((prev) => prev.filter((b) => b.bookingId !== bookingId));
         setSelected(null);
@@ -3169,19 +3174,23 @@ const AdminPanel = () => {
   }, []);
 
   const filtered = bookings.filter((b) =>
-    [b.bookingId, b.guestName, b.email].some((s) => s?.toLowerCase().includes(search.toLowerCase()))
+    [b.bookingId, b.guestName, b.email, b.mobile].some((s) => s?.toLowerCase().includes(search.toLowerCase()))
   );
 
   const todayStr = new Date().toISOString().split("T")[0];
-  const todaysBookings = filtered.filter((b) => b.createdAt?.startsWith(todayStr));
-  const otherBookings = filtered.filter((b) => !b.createdAt?.startsWith(todayStr));
   
-  const checkInsToday = filtered.filter(b => b.checkIn === todayStr);
-  const checkOutsToday = filtered.filter(b => b.checkOut === todayStr);
+  // Categorized Data Arrays - STRICTLY FILTERED by Confirmed vs Cancelled
+  const confirmedBookings = filtered.filter(b => b.status === "confirmed");
+  const cancelledBookings = filtered.filter(b => b.status === "cancelled");
   
-  // Calculate Remaining
-  const checkinRemaining = checkinList.filter(b => !b.checkedIn).length;
-  const checkoutRemaining = checkoutList.filter(b => !b.checkedOut).length;
+  const todaysReceived = filtered.filter((b) => b.createdAt?.startsWith(todayStr) && b.status === "confirmed");
+  const otherBookings = filtered.filter((b) => !b.createdAt?.startsWith(todayStr) && b.status === "confirmed");
+  
+  // Check-in / Check-out Action Lists
+  const checkInsToday = filtered.filter(b => b.checkIn === todayStr && b.status === "confirmed");
+  const checkOutsToday = filtered.filter(b => b.checkOut === todayStr && b.status === "confirmed");
+  const checkinRemaining = checkInsToday.filter(b => !b.checkedIn).length;
+  const checkoutRemaining = checkOutsToday.filter(b => !b.checkedOut).length;
 
   const renderTable = (title, data, emptyMessage) => (
     <div style={{ marginBottom: "48px" }}>
@@ -3208,8 +3217,8 @@ const AdminPanel = () => {
                   onMouseEnter={(e) => (e.currentTarget.style.background = "var(--teal-pale)")}
                   onMouseLeave={(e) => (e.currentTarget.style.background = "var(--white)")}
                   onClick={() => { setSelected(b); setSelectedContext("all"); }}>
-                  <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--teal)", fontFamily: "monospace", fontWeight: 700 }}>{b.bookingId}</td>
-                  <td style={{ padding: "15px 20px", fontSize: "14px", color: "var(--ink)", fontWeight: 500 }}>{b.guestName}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--teal)", fontFamily: "monospace", fontWeight: 700, textDecoration: b.status === "cancelled" ? "line-through" : "none" }}>{b.bookingId}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "14px", color: "var(--ink)", fontWeight: 500, textDecoration: b.status === "cancelled" ? "line-through" : "none" }}>{b.guestName}</td>
                   <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--slate)" }}>{b.email}</td>
                   <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--ink2)", textTransform: "capitalize" }}>{b.roomType}</td>
                   <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--ink2)" }}>{b.checkIn}</td>
@@ -3218,7 +3227,7 @@ const AdminPanel = () => {
                   <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--slate)" }}>{b.adults}A/{b.children}C</td>
                   <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--ink)", fontWeight: 600 }}>₹{calculateTotal(b.roomType, b.checkIn, b.checkOut, b.rooms).toLocaleString()}</td>
                   <td style={{ padding: "15px 20px" }}>
-                    <span style={{ fontSize: "10px", letterSpacing: "1px", textTransform: "uppercase", padding: "4px 10px", fontWeight: 600, background: b.status === "confirmed" ? "rgba(42,157,78,0.12)" : "rgba(217,119,6,0.12)", color: b.status === "confirmed" ? "#2a9d4e" : "#d97706", border: `1px solid ${b.status === "confirmed" ? "rgba(42,157,78,0.3)" : "rgba(217,119,6,0.3)"}` }}>
+                    <span style={{ fontSize: "10px", letterSpacing: "1px", textTransform: "uppercase", padding: "4px 10px", fontWeight: 600, background: b.status === "confirmed" ? "rgba(42,157,78,0.12)" : "rgba(217,56,56,0.12)", color: b.status === "confirmed" ? "#2a9d4e" : "#d93838", border: `1px solid ${b.status === "confirmed" ? "rgba(42,157,78,0.3)" : "rgba(217,56,56,0.3)"}` }}>
                       {b.status}
                     </span>
                   </td>
@@ -3240,9 +3249,8 @@ const AdminPanel = () => {
         onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: "28px 36px", borderBottom: "1px solid var(--parchment)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--cream)" }}>
           <div>
-            <div className="eyebrow" style={{ marginBottom: "4px" }}>{title}</div>
-            <div style={{ fontFamily: "var(--font-d)", fontSize: "22px", color: "var(--ink)" }}>
-              {icon} {data.length} Guest{data.length !== 1 ? "s" : ""} Today
+            <div style={{ fontFamily: "var(--font-d)", fontSize: "24px", color: "var(--ink)" }}>
+              {icon} {title}
             </div>
           </div>
           <button onClick={onClose} style={{ background: "none", border: "1.5px solid var(--parchment)", width: "36px", height: "36px", cursor: "none", fontSize: "16px", color: "var(--slate)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
@@ -3302,6 +3310,137 @@ const AdminPanel = () => {
       </div>
     );
 
+  // ── FULL PAGE LIST VIEW (Replaces dashboard when a user clicks 'View Full List') ──
+  if (fullScreenList) {
+    let listTitle = "";
+    let listData = [];
+    let emptyMsg = "";
+
+    if (fullScreenList === "today") {
+      listTitle = "Today's Received Bookings";
+      listData = todaysReceived;
+      emptyMsg = "No bookings received today.";
+    } else if (fullScreenList === "confirmed") {
+      listTitle = "Total Confirmed Bookings";
+      listData = confirmedBookings;
+      emptyMsg = "No confirmed bookings found.";
+    } else if (fullScreenList === "cancelled") {
+      listTitle = "Cancelled Bookings";
+      listData = cancelledBookings;
+      emptyMsg = "No cancelled bookings found.";
+    }
+
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--cream2)" }}>
+        <div style={{ background: "var(--white)", borderBottom: "1px solid var(--parchment)", padding: "16px 44px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--shadow-sm)" }}>
+          <div style={{ fontFamily: "var(--font-d)", fontSize: "22px", color: "var(--ink)" }}>
+            Hotel <em style={{ fontStyle: "italic", color: "var(--teal)" }}>Frontier</em>
+            <span style={{ fontFamily: "var(--font-b)", fontSize: "13px", color: "var(--mist)", marginLeft: "10px" }}>/ {listTitle}</span>
+          </div>
+          <div style={{ display: "flex", gap: "12px" }}>
+            <button onClick={() => setFullScreenList(null)} className="btn-outline-teal" style={{ padding: "9px 20px", background: "var(--teal)", color: "var(--white)" }}>← Back to Dashboard</button>
+          </div>
+        </div>
+
+        <div style={{ padding: "40px 44px" }}>
+          {renderTable(listTitle, listData, emptyMsg)}
+        </div>
+
+        {/* Re-include the modal so you can still click and edit from the fullscreen list */}
+        <AnimatePresence>
+        {selected && (
+          <div className="modal-wrap" onClick={() => setSelected(null)}>
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+              style={{ background: "var(--white)", boxShadow: "var(--shadow-lg)", maxWidth: "560px", width: "100%", padding: "44px", borderTop: "3px solid var(--champagne)", borderRadius: "4px" }}
+              onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
+                <div>
+                  <div className="eyebrow" style={{ marginBottom: "6px" }}>Booking Details</div>
+                  <div style={{ fontFamily: "var(--font-d)", fontSize: "24px", color: "var(--teal)", fontWeight: 500, textDecoration: selected.status === "cancelled" ? "line-through" : "none" }}>{selected.bookingId}</div>
+                </div>
+                <button onClick={() => setSelected(null)} style={{ background: "none", border: "1.5px solid var(--parchment)", width: "36px", height: "36px", cursor: "none", fontSize: "16px", color: "var(--slate)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                {[
+                  ["Guest", selected.guestName],
+                  ["Email", selected.email],
+                  ["Mobile", selected.mobile],
+                  ["Room Type", selected.roomType],
+                  ["Check-in", selected.checkIn],
+                  ["Check-out", selected.checkOut],
+                  ["Rooms", selected.rooms],
+                  ["Adults", selected.adults],
+                  ["Children", selected.children],
+                  ["Status", selected.status],
+                  ["Booked On", new Date(selected.createdAt).toLocaleDateString()],
+                  ["Total Amount", `₹${calculateTotal(selected.roomType, selected.checkIn, selected.checkOut, selected.rooms).toLocaleString()}`],
+                ].map(([k, v]) => (
+                  <div key={k} style={{ padding: "14px 16px", background: "var(--cream)", borderLeft: "2px solid var(--teal-pale)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--champagne)", marginBottom: "5px", fontWeight: 700 }}>{k}</div>
+                    <div style={{ fontSize: "14px", color: "var(--ink)", fontWeight: 400, textTransform: k === "Room Type" ? "capitalize" : "none" }}>{v}</div>
+                  </div>
+                ))}
+
+                {selected.address && (
+                  <div style={{ gridColumn: "span 2", padding: "14px 16px", background: "var(--cream)", borderLeft: "2px solid var(--teal-pale)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--champagne)", marginBottom: "5px", fontWeight: 700 }}>Address</div>
+                    <div style={{ fontSize: "14px", color: "var(--ink)" }}>{selected.address}</div>
+                  </div>
+                )}
+                {selected.specialRequests && (
+                  <div style={{ gridColumn: "span 2", padding: "14px 16px", background: "var(--teal-pale)", borderLeft: "2px solid var(--teal)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--teal)", marginBottom: "5px", fontWeight: 700 }}>Special Requests</div>
+                    <div style={{ fontSize: "14px", color: "var(--teal-dark)" }}>{selected.specialRequests}</div>
+                  </div>
+                )}
+
+                {/* Hide check-in/out logic if booking is cancelled entirely */}
+                {selected.status === "confirmed" && (
+                  <div style={{ gridColumn: "span 2", borderTop: "1px solid var(--parchment)", paddingTop: "24px", marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ display: "flex", gap: "10px" }}>
+                      {(selectedContext === "all" || selectedContext === "checkin") && (
+                        <button
+                          onClick={() => checkInOutBooking(selected.bookingId, "checkin")}
+                          disabled={selected.checkedIn}
+                          style={{ flex: 1, background: selected.checkedIn ? "rgba(42,157,78,0.12)" : "linear-gradient(135deg, var(--teal-dark), var(--teal))", color: selected.checkedIn ? "#2a9d4e" : "#fff", border: selected.checkedIn ? "1.5px solid rgba(42,157,78,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedIn ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                          onMouseEnter={(e) => { if (!selected.checkedIn) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                          {selected.checkedIn ? "✅ Checked In" : "🛎 Mark Check-In"}
+                        </button>
+                      )}
+                      
+                      {(selectedContext === "all" || selectedContext === "checkout") && (
+                        <button
+                          onClick={() => checkInOutBooking(selected.bookingId, "checkout")}
+                          disabled={selected.checkedOut}
+                          style={{ flex: 1, background: selected.checkedOut ? "rgba(123,79,30,0.1)" : "linear-gradient(135deg, #7B4F1E, var(--champ-dk))", color: selected.checkedOut ? "var(--champ-dk)" : "#fff", border: selected.checkedOut ? "1.5px solid rgba(158,122,62,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedOut ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                          onMouseEnter={(e) => { if (!selected.checkedOut) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                          {selected.checkedOut ? "✅ Checked Out" : "🧳 Mark Check-Out"}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "4px" }}>
+                      <button onClick={() => cancelBooking(selected.bookingId)}
+                        style={{ background: "#d93838", color: "var(--white)", border: "none", padding: "14px 28px", fontSize: "11px", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", cursor: "none", display: "flex", alignItems: "center", gap: "8px", transition: "background 0.3s", borderRadius: "4px" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#b92b2b")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#d93838")}>
+                        ⚠️ Cancel Booking
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </div>
+        )}
+        </AnimatePresence>
+      </div>
+    );
+  }
+
+  // ── DEFAULT DASHBOARD VIEW ──
   return (
     <div style={{ minHeight: "100vh", background: "var(--cream2)" }}>
       {/* Admin Navbar */}
@@ -3322,20 +3461,36 @@ const AdminPanel = () => {
       </div>
 
       <div style={{ padding: "40px 44px" }}>
-        {/* Row 1: Original 4 Stats */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
+        
+        {/* Row 1: The 3 Main Summary Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "24px", marginBottom: "36px" }}>
           {[
-            { label: "Total Bookings", val: bookings.length, icon: "📋", color: "var(--teal)" },
-            { label: "Today's Bookings", val: todaysBookings.length, icon: "📅", color: "var(--champagne)" },
-            { label: "Confirmed", val: bookings.filter((b) => b.status === "confirmed").length, icon: "✅", color: "#2a9d4e" },
-            { label: "Pending", val: bookings.filter((b) => b.status === "pending").length, icon: "⏳", color: "#d97706" },
-          ].map((s, i) => (
-            <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}
-              style={{ background: "var(--white)", boxShadow: "var(--shadow-sm)", padding: "28px 24px", borderTop: `3px solid ${s.color}`, borderRadius: "4px" }}>
-              <div style={{ fontSize: "22px", marginBottom: "10px" }}>{s.icon}</div>
-              <div style={{ fontFamily: "var(--font-d)", fontSize: "38px", fontWeight: 500, color: s.color, lineHeight: 1 }}>{s.val}</div>
-              <div style={{ fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--mist)", marginTop: "8px", fontWeight: 600 }}>{s.label}</div>
-            </motion.div>
+            { id: "today", label: "Today's Received Bookings", val: todaysReceived.length, icon: "📅", color: "var(--champagne)", bgRgba: "rgba(200,169,106,0.08)", borderRgba: "rgba(200,169,106,0.2)" },
+            { id: "confirmed", label: "Total Confirmed Bookings", val: confirmedBookings.length, icon: "✅", color: "#2a9d4e", bgRgba: "rgba(42,157,78,0.08)", borderRgba: "rgba(42,157,78,0.2)" },
+            { id: "cancelled", label: "Cancelled Bookings", val: cancelledBookings.length, icon: "❌", color: "#d93838", bgRgba: "rgba(217,56,56,0.08)", borderRgba: "rgba(217,56,56,0.2)" },
+          ].map((card, i) => (
+            <div key={i} style={{ background: "var(--white)", border: `1px solid ${card.borderRgba}`, borderRadius: "4px", padding: "24px", boxShadow: "var(--shadow-sm)", borderTop: `3px solid ${card.color}` }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+                <div>
+                  <h4 style={{ fontFamily: "var(--font-d)", fontSize: "20px", color: "var(--ink)", display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
+                    <span>{card.icon}</span> {card.label}
+                  </h4>
+                  <div style={{ display: "flex", alignItems: "baseline", marginTop: "12px" }}>
+                    <div style={{ fontFamily: "var(--font-d)", fontSize: "48px", fontWeight: 500, color: card.color, lineHeight: 1 }}>
+                      {card.val}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setFullScreenList(card.id)}
+                  style={{ background: card.bgRgba, color: card.color, border: `1px solid ${card.borderRgba}`, padding: "10px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1px", textTransform: "uppercase", cursor: "none", borderRadius: "4px", transition: "all 0.3s", marginTop: "4px" }}
+                  onMouseEnter={(e) => (e.target.style.background = card.borderRgba)}
+                  onMouseLeave={(e) => (e.target.style.background = card.bgRgba)}
+                >
+                  View Full List →
+                </button>
+              </div>
+            </div>
           ))}
         </div>
 
@@ -3395,28 +3550,29 @@ const AdminPanel = () => {
               </button>
             </div>
           </div>
+
         </div>
 
         {/* Search */}
         <div style={{ marginBottom: "28px" }}>
-          <input className="f-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by booking ID, guest name or email…" style={{ maxWidth: "480px", background: "var(--white)", borderRadius: "4px" }} />
+          <input className="f-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by booking ID, guest name, email or mobile…" style={{ maxWidth: "480px", background: "var(--white)", borderRadius: "4px" }} />
         </div>
 
         {/* --- Render Tables --- */}
-        {renderTable("Today's Bookings", todaysBookings, "No bookings received today yet.")}
-        {renderTable("All Bookings", otherBookings, "No older bookings found.")}
+        {renderTable("Today's Received Bookings", todaysReceived, "No bookings received today yet.")}
+        {renderTable("All Other Bookings", otherBookings, "No older bookings found.")}
       </div>
 
       {/* Modals for Checkin/Checkout Lists */}
       <AnimatePresence>
         {showCheckinModal && (
-          <CheckListModal title="Today's Check-ins" icon="🛎" data={checkinList} contextStr="checkin" onClose={() => setShowCheckinModal(false)} />
+          <CheckListModal title={`Today's Check-ins (${checkInsToday.length})`} icon="🛎" data={checkinList} contextStr="checkin" onClose={() => setShowCheckinModal(false)} />
         )}
       </AnimatePresence>
 
       <AnimatePresence>
         {showCheckoutModal && (
-          <CheckListModal title="Today's Check-outs" icon="🧳" data={checkoutList} contextStr="checkout" onClose={() => setShowCheckoutModal(false)} />
+          <CheckListModal title={`Today's Check-outs (${checkOutsToday.length})`} icon="🧳" data={checkoutList} contextStr="checkout" onClose={() => setShowCheckoutModal(false)} />
         )}
       </AnimatePresence>
 
@@ -3430,7 +3586,7 @@ const AdminPanel = () => {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
                 <div>
                   <div className="eyebrow" style={{ marginBottom: "6px" }}>Booking Details</div>
-                  <div style={{ fontFamily: "var(--font-d)", fontSize: "24px", color: "var(--teal)", fontWeight: 500 }}>{selected.bookingId}</div>
+                  <div style={{ fontFamily: "var(--font-d)", fontSize: "24px", color: "var(--teal)", fontWeight: 500, textDecoration: selected.status === "cancelled" ? "line-through" : "none" }}>{selected.bookingId}</div>
                 </div>
                 <button onClick={() => setSelected(null)} style={{ background: "none", border: "1.5px solid var(--parchment)", width: "36px", height: "36px", cursor: "none", fontSize: "16px", color: "var(--slate)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
               </div>
@@ -3469,53 +3625,50 @@ const AdminPanel = () => {
                   </div>
                 )}
 
-                {/* ── Check-in / Check-out + Cancel buttons ── */}
-                <div style={{ gridColumn: "span 2", borderTop: "1px solid var(--parchment)", paddingTop: "24px", marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
-
-                  {/* Smart Check-in / Check-out row based on context */}
-                  <div style={{ display: "flex", gap: "10px" }}>
-                    {(selectedContext === "all" || selectedContext === "checkin") && (
-                      <button
-                        onClick={() => checkInOutBooking(selected.bookingId, "checkin")}
-                        disabled={selected.checkedIn}
-                        style={{ flex: 1, background: selected.checkedIn ? "rgba(42,157,78,0.12)" : "linear-gradient(135deg, var(--teal-dark), var(--teal))", color: selected.checkedIn ? "#2a9d4e" : "#fff", border: selected.checkedIn ? "1.5px solid rgba(42,157,78,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedIn ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
-                        onMouseEnter={(e) => { if (!selected.checkedIn) e.currentTarget.style.opacity = "0.85"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
-                        {selected.checkedIn ? "✅ Checked In" : "🛎 Mark Check-In"}
+                {/* Hide check-in/out logic if booking is cancelled entirely */}
+                {selected.status === "confirmed" && (
+                  <div style={{ gridColumn: "span 2", borderTop: "1px solid var(--parchment)", paddingTop: "24px", marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
+                    <div style={{ display: "flex", gap: "10px" }}>
+                      {(selectedContext === "all" || selectedContext === "checkin") && (
+                        <button
+                          onClick={() => checkInOutBooking(selected.bookingId, "checkin")}
+                          disabled={selected.checkedIn}
+                          style={{ flex: 1, background: selected.checkedIn ? "rgba(42,157,78,0.12)" : "linear-gradient(135deg, var(--teal-dark), var(--teal))", color: selected.checkedIn ? "#2a9d4e" : "#fff", border: selected.checkedIn ? "1.5px solid rgba(42,157,78,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedIn ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                          onMouseEnter={(e) => { if (!selected.checkedIn) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                          {selected.checkedIn ? "✅ Checked In" : "🛎 Mark Check-In"}
+                        </button>
+                      )}
+                      
+                      {(selectedContext === "all" || selectedContext === "checkout") && (
+                        <button
+                          onClick={() => checkInOutBooking(selected.bookingId, "checkout")}
+                          disabled={selected.checkedOut}
+                          style={{ flex: 1, background: selected.checkedOut ? "rgba(123,79,30,0.1)" : "linear-gradient(135deg, #7B4F1E, var(--champ-dk))", color: selected.checkedOut ? "var(--champ-dk)" : "#fff", border: selected.checkedOut ? "1.5px solid rgba(158,122,62,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedOut ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                          onMouseEnter={(e) => { if (!selected.checkedOut) e.currentTarget.style.opacity = "0.85"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                          {selected.checkedOut ? "✅ Checked Out" : "🧳 Mark Check-Out"}
+                        </button>
+                      )}
+                    </div>
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "4px" }}>
+                      <button onClick={() => cancelBooking(selected.bookingId)}
+                        style={{ background: "#d93838", color: "var(--white)", border: "none", padding: "14px 28px", fontSize: "11px", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", cursor: "none", display: "flex", alignItems: "center", gap: "8px", transition: "background 0.3s", borderRadius: "4px" }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "#b92b2b")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "#d93838")}>
+                        ⚠️ Cancel Booking
                       </button>
-                    )}
-                    
-                    {(selectedContext === "all" || selectedContext === "checkout") && (
-                      <button
-                        onClick={() => checkInOutBooking(selected.bookingId, "checkout")}
-                        disabled={selected.checkedOut}
-                        style={{ flex: 1, background: selected.checkedOut ? "rgba(123,79,30,0.1)" : "linear-gradient(135deg, #7B4F1E, var(--champ-dk))", color: selected.checkedOut ? "var(--champ-dk)" : "#fff", border: selected.checkedOut ? "1.5px solid rgba(158,122,62,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedOut ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
-                        onMouseEnter={(e) => { if (!selected.checkedOut) e.currentTarget.style.opacity = "0.85"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
-                        {selected.checkedOut ? "✅ Checked Out" : "🧳 Mark Check-Out"}
-                      </button>
-                    )}
+                    </div>
                   </div>
-
-                  {/* Cancel button */}
-                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "4px" }}>
-                    <button onClick={() => cancelBooking(selected.bookingId)}
-                      style={{ background: "#d93838", color: "var(--white)", border: "none", padding: "14px 28px", fontSize: "11px", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", cursor: "none", display: "flex", alignItems: "center", gap: "8px", transition: "background 0.3s", borderRadius: "4px" }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = "#b92b2b")}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = "#d93838")}>
-                      ⚠️ Cancel & Delete Booking
-                    </button>
-                  </div>
-                </div>
+                )}
               </div>
             </motion.div>
           </div>
         )}
-      </AnimatePresence>
+        </AnimatePresence>
     </div>
   );
 };
-
 /* ─────────────────────────────────────────────
    HOME PAGE
 ───────────────────────────────────────────── */

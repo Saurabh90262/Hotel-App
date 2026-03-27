@@ -262,6 +262,53 @@ const sendCancellationEmail = async (booking) => {
   await sendEmailViaGoogleScript(booking.email, subject, html);
 };
 
+/* ========================= SEND CHECKOUT / FEEDBACK EMAIL ========================= */
+const sendCheckoutEmail = async (booking) => {
+  const subject = `Thank you for staying with Hotel Frontier!`;
+  // The feedback link you provided
+  const feedbackLink = "https://www.google.com/travel/search?q=hotel%20frontier%20prime%20kota&g2lb=4899568%2C4899569%2C4965990%2C72471280%2C72560029%2C72573224%2C72647020%2C72686036%2C72803964%2C72882230%2C72958624%2C73059275%2C73064764%2C121529349&hl=en-IN&gl=in&cs=1&ssta=1&ts=CAEaRwopEicyJTB4Mzk2ZjliYWI2NGM0MWI5MToweDM4YmMwZGY3M2FlMzk2YmUSGhIUCgcI6g8QBhgOEgcI6g8QBhgPGAEyAhAA&qs=CAEyE0Nnb0l2cTJPMV9PLWc5NDRFQUU4AkIJCb6W4zr3Dbw4QgkJvpbjOvcNvDg&ap=ugEHcmV2aWV3cw&ictx=111&ved=0CAAQ5JsGahcKEwjgyYyo3cCTAxUAAAAAHQAAAAAQBg";
+
+  const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <style>
+          body { margin: 0; padding: 0; font-family: 'Helvetica Neue', Arial, sans-serif; background: #0a0a0a; }
+          .container { max-width: 600px; margin: 0 auto; background: #111111; border-top: 4px solid #C9A84C; }
+          .header { padding: 40px; text-align: center; border-bottom: 1px solid rgba(255,255,255,0.05); }
+          .hotel-name { font-size: 28px; font-weight: 300; color: #ffffff; letter-spacing: 2px; }
+          .hotel-name span { color: #C9A84C; }
+          .body { padding: 40px; color: #cccccc; line-height: 1.7; text-align: center; }
+          .btn { display: inline-block; background: #C9A84C; color: #111; text-decoration: none; padding: 14px 28px; font-size: 13px; font-weight: bold; letter-spacing: 1px; text-transform: uppercase; border-radius: 4px; margin-top: 24px; transition: background 0.3s; }
+          .footer { background: #0a0a0a; padding: 30px; text-align: center; color: #666; font-size: 12px; }
+        </style>
+      </head>
+      <body>
+        <div class="container">
+          <div class="header">
+            <div style="font-size:32px;margin-bottom:12px">👋</div>
+            <div class="hotel-name">Hotel <span>Frontier</span></div>
+          </div>
+          <div class="body">
+            <h2 style="color: #fff; font-weight: 400; margin-top: 0;">Thank you for staying with us, ${booking.guestName}!</h2>
+            <p>We loved having you as our guest. We hope your stay was comfortable, relaxing, and memorable.</p>
+            <p>To help us continue providing exceptional experiences to guests like you, we would love to hear about your stay.</p>
+            
+            <a href="${feedbackLink}" class="btn">Please Give Your Valuable Feedback</a>
+            
+          </div>
+          <div class="footer">
+            Hotel Frontier · Station Road, Kota, Rajasthan<br>
+            We hope to welcome you back soon!
+          </div>
+        </div>
+      </body>
+      </html>
+  `;
+  
+  await sendEmailViaGoogleScript(booking.email, subject, html);
+};
+
 /* ========================= ROUTES ========================= */
 
 // Send OTP
@@ -394,20 +441,24 @@ app.patch("/api/admin/bookings/:id/status", authAdmin, async (req, res) => {
   }
 });
 
-// Delete booking & send cancellation email
+// Cancel booking & send cancellation email
 app.delete("/api/admin/bookings/:id", authAdmin, async (req, res) => {
   try {
-    // findOneAndDelete returns the document it just deleted so we can use its data
-    const deletedBooking = await Booking.findOneAndDelete({ bookingId: req.params.id });
+    // Instead of deleting, we UPDATE the status to 'cancelled'
+    const cancelledBooking = await Booking.findOneAndUpdate(
+      { bookingId: req.params.id },
+      { status: "cancelled" },
+      { returnDocument: 'after' }
+    );
     
-    if (!deletedBooking) {
+    if (!cancelledBooking) {
       return res.status(404).json({ success: false, message: "Booking not found" });
     }
 
     // Trigger the apology email in the background
-    sendCancellationEmail(deletedBooking).catch(err => console.error("Cancel email error:", err));
+    sendCancellationEmail(cancelledBooking).catch(err => console.error("Cancel email error:", err));
     
-    res.json({ success: true, message: "Deleted successfully and email sent" });
+    res.json({ success: true, booking: cancelledBooking, message: "Booking cancelled and email sent" });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -439,12 +490,25 @@ app.patch("/api/admin/bookings/:id/checkinout", authAdmin, async (req, res) => {
   try {
     const { action } = req.body; // "checkin" or "checkout"
     const field = action === "checkin" ? "checkedIn" : "checkedOut";
+    
+    // First, check the existing booking state so we don't double-send emails
+    const existingBooking = await Booking.findOne({ bookingId: req.params.id });
+    if (!existingBooking) return res.status(404).json({ success: false, message: "Not found" });
+    
+    const wasAlreadyCheckedOut = existingBooking.checkedOut;
+
+    // Update the database
     const booking = await Booking.findOneAndUpdate(
       { bookingId: req.params.id },
       { [field]: true },
       { returnDocument: 'after' }
     );
-    if (!booking) return res.status(404).json({ success: false, message: "Not found" });
+    
+    // If the admin clicked Check-Out, AND it wasn't already checked out before, send the email!
+    if (action === "checkout" && !wasAlreadyCheckedOut) {
+      sendCheckoutEmail(booking).catch(err => console.error("Checkout email error:", err));
+    }
+
     res.json({ success: true, booking });
   } catch {
     res.status(500).json({ success: false, message: "Server error" });
