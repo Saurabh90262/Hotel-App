@@ -3049,6 +3049,12 @@ const AdminPanel = () => {
   const [error, setError] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState(null);
+  
+  const [selectedContext, setSelectedContext] = useState("all"); 
+  const [checkinList, setCheckinList] = useState([]);
+  const [checkoutList, setCheckoutList] = useState([]);
+  const [showCheckinModal, setShowCheckinModal] = useState(false);
+  const [showCheckoutModal, setShowCheckoutModal] = useState(false);
 
   const login = async (e) => {
     e.preventDefault();
@@ -3065,6 +3071,8 @@ const AdminPanel = () => {
         localStorage.setItem("adminToken", d.token);
         setLoggedIn(true);
         fetchBookings(d.token);
+        fetchTodayCheckins(d.token);
+        fetchTodayCheckouts(d.token);
       } else setError(d.message || "Invalid credentials");
     } catch {
       setError("Server error");
@@ -3076,9 +3084,7 @@ const AdminPanel = () => {
     setLoading(true);
     try {
       const res = await fetch("http://localhost:5000/api/admin/bookings", {
-        headers: {
-          Authorization: `Bearer ${token || localStorage.getItem("adminToken")}`,
-        },
+        headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
       });
       const d = await res.json();
       if (d.success) setBookings(d.bookings);
@@ -3086,36 +3092,69 @@ const AdminPanel = () => {
     setLoading(false);
   };
 
-  const cancelBooking = async (bookingId) => {
-    if (
-      !window.confirm(
-        `⚠️ Are you sure you want to cancel booking ${bookingId}?\nThis will delete it from the database and email an apology to the guest.`,
-      )
-    )
-      return;
-
+  const fetchTodayCheckins = async (token) => {
     try {
-      const res = await fetch(
-        `http://localhost:5000/api/admin/bookings/${bookingId}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("adminToken")}`,
-          },
-        },
-      );
+      const res = await fetch("http://localhost:5000/api/admin/checkins/today", {
+        headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
+      });
       const d = await res.json();
+      if (d.success) setCheckinList(d.bookings);
+    } catch {}
+  };
 
+  const fetchTodayCheckouts = async (token) => {
+    try {
+      const res = await fetch("http://localhost:5000/api/admin/checkouts/today", {
+        headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
+      });
+      const d = await res.json();
+      if (d.success) setCheckoutList(d.bookings);
+    } catch {}
+  };
+
+  const cancelBooking = async (bookingId) => {
+    if (!window.confirm(`⚠️ Cancel booking ${bookingId}? This will delete it and email an apology.`)) return;
+    try {
+      const res = await fetch(`http://localhost:5000/api/admin/bookings/${bookingId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
+      });
+      const d = await res.json();
       if (d.success) {
-        // Remove the booking from the table instantly without reloading the page
         setBookings((prev) => prev.filter((b) => b.bookingId !== bookingId));
-        setSelected(null); // Close the modal
+        setCheckinList((prev) => prev.filter((b) => b.bookingId !== bookingId));
+        setCheckoutList((prev) => prev.filter((b) => b.bookingId !== bookingId));
+        setSelected(null);
         alert("✅ Booking cancelled and email sent!");
-      } else {
-        alert(d.message || "Failed to cancel booking");
-      }
-    } catch (err) {
+      } else alert(d.message || "Failed to cancel booking");
+    } catch {
       alert("Server error while cancelling.");
+    }
+  };
+
+  const checkInOutBooking = async (bookingId, action) => {
+    const label = action === "checkin" ? "Check-In" : "Check-Out";
+    if (!window.confirm(`Confirm ${label} for booking ${bookingId}?`)) return;
+    try {
+      const res = await fetch(`http://localhost:5000/api/admin/bookings/${bookingId}/checkinout`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${localStorage.getItem("adminToken")}`,
+        },
+        body: JSON.stringify({ action }),
+      });
+      const d = await res.json();
+      if (d.success) {
+        const updater = (prev) => prev.map((b) => (b.bookingId === bookingId ? { ...b, ...d.booking } : b));
+        setBookings(updater);
+        setCheckinList(updater);
+        setCheckoutList(updater);
+        setSelected((prev) => (prev ? { ...prev, ...d.booking } : prev));
+        alert(`✅ ${label} recorded!`);
+      } else alert(d.message || "Failed");
+    } catch {
+      alert("Server error.");
     }
   };
 
@@ -3124,112 +3163,138 @@ const AdminPanel = () => {
     if (t) {
       setLoggedIn(true);
       fetchBookings(t);
+      fetchTodayCheckins(t);
+      fetchTodayCheckouts(t);
     }
   }, []);
+
   const filtered = bookings.filter((b) =>
-    [b.bookingId, b.guestName, b.email].some((s) =>
-      s?.toLowerCase().includes(search.toLowerCase()),
-    ),
+    [b.bookingId, b.guestName, b.email].some((s) => s?.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  const todaysBookings = filtered.filter((b) => b.createdAt?.startsWith(todayStr));
+  const otherBookings = filtered.filter((b) => !b.createdAt?.startsWith(todayStr));
+  
+  const checkInsToday = filtered.filter(b => b.checkIn === todayStr);
+  const checkOutsToday = filtered.filter(b => b.checkOut === todayStr);
+  
+  // Calculate Remaining
+  const checkinRemaining = checkinList.filter(b => !b.checkedIn).length;
+  const checkoutRemaining = checkoutList.filter(b => !b.checkedOut).length;
+
+  const renderTable = (title, data, emptyMessage) => (
+    <div style={{ marginBottom: "48px" }}>
+      <h3 style={{ fontFamily: "var(--font-d)", fontSize: "22px", color: "var(--ink)", marginBottom: "16px" }}>
+        {title} <span style={{ fontSize: "14px", color: "var(--mist)", fontFamily: "var(--font-b)", fontWeight: "normal" }}>({data.length})</span>
+      </h3>
+      <div style={{ background: "var(--white)", boxShadow: "var(--shadow-sm)", overflow: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr style={{ background: "var(--cream)", borderBottom: "2px solid var(--parchment)" }}>
+              {["Booking ID","Guest","Email","Room","Check-in","Check-out","Rooms","Guests","Amount","Status",""].map((h, i) => (
+                <th key={i} style={{ padding: "16px 20px", textAlign: "left", fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--teal)", fontWeight: 600 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={11} style={{ padding: "60px", textAlign: "center", color: "var(--mist)" }}>Loading bookings…</td></tr>
+            ) : data.length === 0 ? (
+              <tr><td colSpan={11} style={{ padding: "60px", textAlign: "center", color: "var(--mist)" }}>{emptyMessage}</td></tr>
+            ) : (
+              data.map((b) => (
+                <tr key={b._id} style={{ borderBottom: "1px solid var(--cream2)", transition: "background 0.2s", cursor: "none" }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = "var(--teal-pale)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "var(--white)")}
+                  onClick={() => { setSelected(b); setSelectedContext("all"); }}>
+                  <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--teal)", fontFamily: "monospace", fontWeight: 700 }}>{b.bookingId}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "14px", color: "var(--ink)", fontWeight: 500 }}>{b.guestName}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--slate)" }}>{b.email}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--ink2)", textTransform: "capitalize" }}>{b.roomType}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--ink2)" }}>{b.checkIn}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--ink2)" }}>{b.checkOut}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", textAlign: "center" }}>{b.rooms}</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--slate)" }}>{b.adults}A/{b.children}C</td>
+                  <td style={{ padding: "15px 20px", fontSize: "13px", color: "var(--ink)", fontWeight: 600 }}>₹{calculateTotal(b.roomType, b.checkIn, b.checkOut, b.rooms).toLocaleString()}</td>
+                  <td style={{ padding: "15px 20px" }}>
+                    <span style={{ fontSize: "10px", letterSpacing: "1px", textTransform: "uppercase", padding: "4px 10px", fontWeight: 600, background: b.status === "confirmed" ? "rgba(42,157,78,0.12)" : "rgba(217,119,6,0.12)", color: b.status === "confirmed" ? "#2a9d4e" : "#d97706", border: `1px solid ${b.status === "confirmed" ? "rgba(42,157,78,0.3)" : "rgba(217,119,6,0.3)"}` }}>
+                      {b.status}
+                    </span>
+                  </td>
+                  <td style={{ padding: "15px 20px", fontSize: "12px", color: "var(--teal)", fontWeight: 600 }}>View →</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // ── Reusable mini-list modal for check-in / check-out ──
+  const CheckListModal = ({ title, icon, data, onClose, contextStr }) => (
+    <div className="modal-wrap" onClick={onClose}>
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+        style={{ background: "var(--white)", boxShadow: "var(--shadow-lg)", maxWidth: "640px", width: "100%", borderTop: "3px solid var(--teal)", maxHeight: "80vh", overflowY: "auto", borderRadius: "4px" }}
+        onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: "28px 36px", borderBottom: "1px solid var(--parchment)", display: "flex", justifyContent: "space-between", alignItems: "center", background: "var(--cream)" }}>
+          <div>
+            <div className="eyebrow" style={{ marginBottom: "4px" }}>{title}</div>
+            <div style={{ fontFamily: "var(--font-d)", fontSize: "22px", color: "var(--ink)" }}>
+              {icon} {data.length} Guest{data.length !== 1 ? "s" : ""} Today
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: "none", border: "1.5px solid var(--parchment)", width: "36px", height: "36px", cursor: "none", fontSize: "16px", color: "var(--slate)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+        </div>
+        <div style={{ padding: "20px 36px 36px" }}>
+          {data.length === 0 ? (
+            <p style={{ textAlign: "center", color: "var(--mist)", padding: "40px 0", fontSize: "14px" }}>No guests scheduled for today.</p>
+          ) : data.map((b) => {
+            const isDone = contextStr === "checkin" ? b.checkedIn : b.checkedOut;
+            return (
+              <div key={b._id} onClick={() => { setSelected(b); setSelectedContext(contextStr); onClose(); }}
+                style={{ padding: "16px 20px", borderBottom: "1px solid var(--cream2)", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "none", transition: "background 0.2s", borderLeft: "3px solid transparent" }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--teal-pale)"; e.currentTarget.style.borderLeftColor = "var(--teal)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.borderLeftColor = "transparent"; }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: "var(--ink)", fontSize: "15px", textDecoration: isDone ? "line-through" : "none", opacity: isDone ? 0.5 : 1 }}>{b.guestName}</div>
+                  <div style={{ fontSize: "12px", color: "var(--mist)", marginTop: "3px", textTransform: "capitalize", opacity: isDone ? 0.5 : 1 }}>{b.email} · {b.roomType} · {b.rooms} room(s)</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: "11px", fontFamily: "monospace", color: isDone ? "#2a9d4e" : "var(--teal)", fontWeight: 700 }}>{isDone ? "✅ DONE" : b.bookingId}</div>
+                  <div style={{ fontSize: "11px", color: "var(--mist)", marginTop: "3px" }}>View Details →</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </motion.div>
+    </div>
   );
 
   if (!loggedIn)
     return (
-      <div
-        style={{
-          minHeight: "100vh",
-          background: "var(--cream)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "20px",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
+      <div style={{ minHeight: "100vh", background: "var(--cream)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", position: "relative", overflow: "hidden" }}>
         <Particles count={16} color="var(--teal)" />
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          style={{
-            width: "100%",
-            maxWidth: "440px",
-            background: "var(--white)",
-            boxShadow: "var(--shadow-lg)",
-            padding: "52px",
-            position: "relative",
-            zIndex: 5,
-            borderTop: "3px solid var(--champagne)",
-          }}
-        >
+        <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} style={{ width: "100%", maxWidth: "440px", background: "var(--white)", boxShadow: "var(--shadow-lg)", padding: "52px", position: "relative", zIndex: 5, borderTop: "3px solid var(--champagne)", borderRadius: "4px" }}>
           <div style={{ textAlign: "center", marginBottom: "40px" }}>
-            <div
-              style={{
-                fontFamily: "var(--font-d)",
-                fontSize: "30px",
-                fontWeight: 400,
-                color: "var(--ink)",
-                marginBottom: "4px",
-              }}
-            >
-              Hotel{" "}
-              <em style={{ fontStyle: "italic", color: "var(--teal)" }}>
-                Frontier
-              </em>
+            <div style={{ fontFamily: "var(--font-d)", fontSize: "30px", fontWeight: 400, color: "var(--ink)", marginBottom: "4px" }}>
+              Hotel <em style={{ fontStyle: "italic", color: "var(--teal)" }}>Frontier</em>
             </div>
-            <div className="eyebrow" style={{ marginTop: "8px" }}>
-              Admin Portal
-            </div>
+            <div className="eyebrow" style={{ marginTop: "8px" }}>Admin Portal</div>
           </div>
-          {error && (
-            <div
-              style={{
-                background: "rgba(220,50,50,0.07)",
-                border: "1px solid rgba(220,50,50,0.25)",
-                color: "#c43a3a",
-                padding: "12px 16px",
-                marginBottom: "20px",
-                fontSize: "13px",
-              }}
-            >
-              {error}
-            </div>
-          )}
+          {error && <div style={{ background: "rgba(220,50,50,0.07)", border: "1px solid rgba(220,50,50,0.25)", color: "#c43a3a", padding: "12px 16px", marginBottom: "20px", fontSize: "13px" }}>{error}</div>}
           <form onSubmit={login}>
             <div style={{ marginBottom: "18px" }}>
               <label className="f-label">Username</label>
-              <input
-                className="f-input"
-                value={creds.username}
-                onChange={(e) =>
-                  setCreds((c) => ({ ...c, username: e.target.value }))
-                }
-                required
-                placeholder="admin"
-              />
+              <input className="f-input" value={creds.username} onChange={(e) => setCreds((c) => ({ ...c, username: e.target.value }))} required placeholder="admin" />
             </div>
             <div style={{ marginBottom: "28px" }}>
               <label className="f-label">Password</label>
-              <input
-                className="f-input"
-                type="password"
-                value={creds.password}
-                onChange={(e) =>
-                  setCreds((c) => ({ ...c, password: e.target.value }))
-                }
-                required
-                placeholder="••••••••"
-              />
+              <input className="f-input" type="password" value={creds.password} onChange={(e) => setCreds((c) => ({ ...c, password: e.target.value }))} required placeholder="••••••••" />
             </div>
-            <button
-              type="submit"
-              className="btn-primary"
-              style={{
-                width: "100%",
-                justifyContent: "center",
-                padding: "16px",
-              }}
-              disabled={loading}
-            >
+            <button type="submit" className="btn-primary" style={{ width: "100%", justifyContent: "center", padding: "16px" }} disabled={loading}>
               <span>{loading ? "Signing in..." : "Sign In →"}</span>
             </button>
           </form>
@@ -3240,456 +3305,137 @@ const AdminPanel = () => {
   return (
     <div style={{ minHeight: "100vh", background: "var(--cream2)" }}>
       {/* Admin Navbar */}
-      <div
-        style={{
-          background: "var(--white)",
-          borderBottom: "1px solid var(--parchment)",
-          padding: "16px 44px",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          boxShadow: "var(--shadow-sm)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-d)",
-            fontSize: "22px",
-            color: "var(--ink)",
-          }}
-        >
-          Hotel{" "}
-          <em style={{ fontStyle: "italic", color: "var(--teal)" }}>
-            Frontier
-          </em>
-          <span
-            style={{
-              fontFamily: "var(--font-b)",
-              fontSize: "13px",
-              color: "var(--mist)",
-              marginLeft: "10px",
-            }}
-          >
-            / Admin Dashboard
-          </span>
+      <div style={{ background: "var(--white)", borderBottom: "1px solid var(--parchment)", padding: "16px 44px", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--shadow-sm)" }}>
+        <div style={{ fontFamily: "var(--font-d)", fontSize: "22px", color: "var(--ink)" }}>
+          Hotel <em style={{ fontStyle: "italic", color: "var(--teal)" }}>Frontier</em>
+          <span style={{ fontFamily: "var(--font-b)", fontSize: "13px", color: "var(--mist)", marginLeft: "10px" }}>/ Admin Dashboard</span>
         </div>
         <div style={{ display: "flex", gap: "12px" }}>
-          <button
-            onClick={() => fetchBookings()}
-            className="btn-outline-teal"
-            style={{ padding: "9px 20px" }}
-          >
-            ↻ Refresh
-          </button>
-          <button
-            onClick={() => {
-              localStorage.removeItem("adminToken");
-              setLoggedIn(false);
-            }}
-            style={{
-              background: "none",
-              border: "1.5px solid var(--parchment)",
-              color: "var(--slate)",
-              padding: "9px 20px",
-              cursor: "none",
-              fontSize: "11px",
-              letterSpacing: "1.5px",
-              textTransform: "uppercase",
-              fontWeight: 600,
-              transition: "all 0.3s",
-            }}
-            onMouseEnter={(e) => {
-              e.target.style.borderColor = "var(--teal)";
-              e.target.style.color = "var(--teal)";
-            }}
-            onMouseLeave={(e) => {
-              e.target.style.borderColor = "var(--parchment)";
-              e.target.style.color = "var(--slate)";
-            }}
-          >
+          <button onClick={() => { fetchBookings(); fetchTodayCheckins(); fetchTodayCheckouts(); }} className="btn-outline-teal" style={{ padding: "9px 20px" }}>↻ Refresh</button>
+          <button onClick={() => { localStorage.removeItem("adminToken"); setLoggedIn(false); }}
+            style={{ background: "none", border: "1.5px solid var(--parchment)", color: "var(--slate)", padding: "9px 20px", cursor: "none", fontSize: "11px", letterSpacing: "1.5px", textTransform: "uppercase", fontWeight: 600, transition: "all 0.3s" }}
+            onMouseEnter={(e) => { e.target.style.borderColor = "var(--teal)"; e.target.style.color = "var(--teal)"; }}
+            onMouseLeave={(e) => { e.target.style.borderColor = "var(--parchment)"; e.target.style.color = "var(--slate)"; }}>
             Logout
           </button>
         </div>
       </div>
 
       <div style={{ padding: "40px 44px" }}>
-        {/* Stats */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(4,1fr)",
-            gap: "16px",
-            marginBottom: "36px",
-          }}
-        >
+        {/* Row 1: Original 4 Stats */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px", marginBottom: "24px" }}>
           {[
-            {
-              label: "Total Bookings",
-              val: bookings.length,
-              icon: "📋",
-              color: "var(--teal)",
-            },
-            {
-              label: "Today's Bookings",
-              val: bookings.filter((b) =>
-                b.createdAt?.startsWith(new Date().toISOString().split("T")[0]),
-              ).length,
-              icon: "📅",
-              color: "var(--champagne)",
-            },
-            {
-              label: "Confirmed",
-              val: bookings.filter((b) => b.status === "confirmed").length,
-              icon: "✅",
-              color: "#2a9d4e",
-            },
-            {
-              label: "Pending",
-              val: bookings.filter((b) => b.status === "pending").length,
-              icon: "⏳",
-              color: "#d97706",
-            },
+            { label: "Total Bookings", val: bookings.length, icon: "📋", color: "var(--teal)" },
+            { label: "Today's Bookings", val: todaysBookings.length, icon: "📅", color: "var(--champagne)" },
+            { label: "Confirmed", val: bookings.filter((b) => b.status === "confirmed").length, icon: "✅", color: "#2a9d4e" },
+            { label: "Pending", val: bookings.filter((b) => b.status === "pending").length, icon: "⏳", color: "#d97706" },
           ].map((s, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: i * 0.08 }}
-              style={{
-                background: "var(--white)",
-                boxShadow: "var(--shadow-sm)",
-                padding: "28px 32px",
-                borderTop: `3px solid ${s.color}`,
-              }}
-            >
-              <div style={{ fontSize: "22px", marginBottom: "10px" }}>
-                {s.icon}
-              </div>
-              <div
-                style={{
-                  fontFamily: "var(--font-d)",
-                  fontSize: "42px",
-                  fontWeight: 500,
-                  color: s.color,
-                  lineHeight: 1,
-                }}
-              >
-                {s.val}
-              </div>
-              <div
-                style={{
-                  fontSize: "10px",
-                  letterSpacing: "2px",
-                  textTransform: "uppercase",
-                  color: "var(--mist)",
-                  marginTop: "8px",
-                  fontWeight: 600,
-                }}
-              >
-                {s.label}
-              </div>
+            <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}
+              style={{ background: "var(--white)", boxShadow: "var(--shadow-sm)", padding: "28px 24px", borderTop: `3px solid ${s.color}`, borderRadius: "4px" }}>
+              <div style={{ fontSize: "22px", marginBottom: "10px" }}>{s.icon}</div>
+              <div style={{ fontFamily: "var(--font-d)", fontSize: "38px", fontWeight: 500, color: s.color, lineHeight: 1 }}>{s.val}</div>
+              <div style={{ fontSize: "10px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--mist)", marginTop: "8px", fontWeight: 600 }}>{s.label}</div>
             </motion.div>
           ))}
         </div>
 
-        {/* Search */}
-        <div style={{ marginBottom: "18px" }}>
-          <input
-            className="f-input"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by booking ID, guest name or email…"
-            style={{ maxWidth: "480px", background: "var(--white)" }}
-          />
+        {/* Row 2: Today's Check-ins & Check-outs Action Panels */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "24px", marginBottom: "36px" }}>
+          
+          {/* Arrivals Card */}
+          <div style={{ background: "var(--white)", border: "1px solid rgba(27,107,107,0.2)", borderRadius: "4px", padding: "24px", boxShadow: "var(--shadow-sm)", borderTop: "3px solid var(--teal)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <h4 style={{ fontFamily: "var(--font-d)", fontSize: "20px", color: "var(--ink)", display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
+                  <span>🛎</span> Today's Check-ins ({checkInsToday.length})
+                </h4>
+                <div style={{ display: "flex", alignItems: "baseline", marginTop: "12px" }}>
+                  <div style={{ fontFamily: "var(--font-d)", fontSize: "48px", fontWeight: 500, color: "var(--teal)", lineHeight: 1 }}>
+                    {checkinRemaining}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--mist)", fontFamily: "var(--font-b)", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", marginLeft: "12px" }}>
+                    Remaining
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCheckinModal(true)}
+                style={{ background: "rgba(27,107,107,0.1)", color: "var(--teal)", border: "1px solid rgba(27,107,107,0.2)", padding: "10px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1px", textTransform: "uppercase", cursor: "none", borderRadius: "4px", transition: "all 0.3s", marginTop: "4px" }}
+                onMouseEnter={(e) => (e.target.style.background = "rgba(27,107,107,0.2)")}
+                onMouseLeave={(e) => (e.target.style.background = "rgba(27,107,107,0.1)")}
+              >
+                View Details →
+              </button>
+            </div>
+          </div>
+
+          {/* Departures Card */}
+          <div style={{ background: "var(--white)", border: "1px solid rgba(200,169,106,0.3)", borderRadius: "4px", padding: "24px", boxShadow: "var(--shadow-sm)", borderTop: "3px solid var(--champagne)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+              <div>
+                <h4 style={{ fontFamily: "var(--font-d)", fontSize: "20px", color: "var(--ink)", display: "flex", alignItems: "center", gap: "8px", margin: 0 }}>
+                  <span>🧳</span> Today's Check-outs ({checkOutsToday.length})
+                </h4>
+                <div style={{ display: "flex", alignItems: "baseline", marginTop: "12px" }}>
+                  <div style={{ fontFamily: "var(--font-d)", fontSize: "48px", fontWeight: 500, color: "var(--champ-dk)", lineHeight: 1 }}>
+                    {checkoutRemaining}
+                  </div>
+                  <div style={{ fontSize: "12px", color: "var(--mist)", fontFamily: "var(--font-b)", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", marginLeft: "12px" }}>
+                    Remaining
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCheckoutModal(true)}
+                style={{ background: "rgba(200,169,106,0.1)", color: "var(--champ-dk)", border: "1px solid rgba(200,169,106,0.2)", padding: "10px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1px", textTransform: "uppercase", cursor: "none", borderRadius: "4px", transition: "all 0.3s", marginTop: "4px" }}
+                onMouseEnter={(e) => (e.target.style.background = "rgba(200,169,106,0.2)")}
+                onMouseLeave={(e) => (e.target.style.background = "rgba(200,169,106,0.1)")}
+              >
+                View Details →
+              </button>
+            </div>
+          </div>
         </div>
 
-        {/* Table */}
-        <div
-          style={{
-            background: "var(--white)",
-            boxShadow: "var(--shadow-sm)",
-            overflow: "hidden",
-          }}
-        >
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead>
-              <tr
-                style={{
-                  background: "var(--cream)",
-                  borderBottom: "2px solid var(--parchment)",
-                }}
-              >
-                {[
-                  "Booking ID",
-                  "Guest",
-                  "Email",
-                  "Room",
-                  "Check-in",
-                  "Check-out",
-                  "Rooms",
-                  "Guests",
-                  "Amount",
-                  "Status",
-                  "",
-                ].map((h) => (
-                  <th
-                    key={h}
-                    style={{
-                      padding: "16px 20px",
-                      textAlign: "left",
-                      fontSize: "9px",
-                      letterSpacing: "2px",
-                      textTransform: "uppercase",
-                      color: "var(--teal)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td
-                    colSpan={10}
-                    style={{
-                      padding: "60px",
-                      textAlign: "center",
-                      color: "var(--mist)",
-                    }}
-                  >
-                    Loading bookings…
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td
-                    colSpan={10}
-                    style={{
-                      padding: "60px",
-                      textAlign: "center",
-                      color: "var(--mist)",
-                    }}
-                  >
-                    No bookings found
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((b) => (
-                  <tr
-                    key={b._id}
-                    style={{
-                      borderBottom: "1px solid var(--cream2)",
-                      transition: "background 0.2s",
-                      cursor: "none",
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.background = "var(--teal-pale)")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.currentTarget.style.background = "var(--white)")
-                    }
-                    onClick={() => setSelected(b)}
-                  >
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "12px",
-                        color: "var(--teal)",
-                        fontFamily: "monospace",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {b.bookingId}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "14px",
-                        color: "var(--ink)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      {b.guestName}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        color: "var(--slate)",
-                      }}
-                    >
-                      {b.email}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "12px",
-                        color: "var(--ink2)",
-                        textTransform: "capitalize",
-                      }}
-                    >
-                      {b.roomType}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        color: "var(--ink2)",
-                      }}
-                    >
-                      {b.checkIn}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        color: "var(--ink2)",
-                      }}
-                    >
-                      {b.checkOut}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        textAlign: "center",
-                      }}
-                    >
-                      {b.rooms}
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        color: "var(--slate)",
-                      }}
-                    >
-                      {b.adults}A/{b.children}C
-                    </td>
-                    {/* NEW AMOUNT COLUMN */}
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "13px",
-                        color: "var(--ink)",
-                        fontWeight: 600,
-                      }}
-                    >
-                      ₹
-                      {calculateTotal(
-                        b.roomType,
-                        b.checkIn,
-                        b.checkOut,
-                        b.rooms,
-                      ).toLocaleString()}
-                    </td>
-                    <td style={{ padding: "15px 20px" }}>
-                      <span
-                        style={{
-                          fontSize: "10px",
-                          letterSpacing: "1px",
-                          textTransform: "uppercase",
-                          padding: "4px 10px",
-                          fontWeight: 600,
-                          background:
-                            b.status === "confirmed"
-                              ? "rgba(42,157,78,0.12)"
-                              : "rgba(217,119,6,0.12)",
-                          color:
-                            b.status === "confirmed" ? "#2a9d4e" : "#d97706",
-                          border: `1px solid ${b.status === "confirmed" ? "rgba(42,157,78,0.3)" : "rgba(217,119,6,0.3)"}`,
-                        }}
-                      >
-                        {b.status}
-                      </span>
-                    </td>
-                    <td
-                      style={{
-                        padding: "15px 20px",
-                        fontSize: "12px",
-                        color: "var(--teal)",
-                        fontWeight: 600,
-                      }}
-                    >
-                      View →
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        {/* Search */}
+        <div style={{ marginBottom: "28px" }}>
+          <input className="f-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by booking ID, guest name or email…" style={{ maxWidth: "480px", background: "var(--white)", borderRadius: "4px" }} />
         </div>
+
+        {/* --- Render Tables --- */}
+        {renderTable("Today's Bookings", todaysBookings, "No bookings received today yet.")}
+        {renderTable("All Bookings", otherBookings, "No older bookings found.")}
       </div>
 
-      {/* Detail modal */}
+      {/* Modals for Checkin/Checkout Lists */}
+      <AnimatePresence>
+        {showCheckinModal && (
+          <CheckListModal title="Today's Check-ins" icon="🛎" data={checkinList} contextStr="checkin" onClose={() => setShowCheckinModal(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {showCheckoutModal && (
+          <CheckListModal title="Today's Check-outs" icon="🧳" data={checkoutList} contextStr="checkout" onClose={() => setShowCheckoutModal(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* Detail modal for individual booking click */}
       <AnimatePresence>
         {selected && (
           <div className="modal-wrap" onClick={() => setSelected(null)}>
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              style={{
-                background: "var(--white)",
-                boxShadow: "var(--shadow-lg)",
-                maxWidth: "560px",
-                width: "100%",
-                padding: "44px",
-                borderTop: "3px solid var(--champagne)",
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: "28px",
-                }}
-              >
+            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 20 }}
+              style={{ background: "var(--white)", boxShadow: "var(--shadow-lg)", maxWidth: "560px", width: "100%", padding: "44px", borderTop: "3px solid var(--champagne)", borderRadius: "4px" }}
+              onClick={(e) => e.stopPropagation()}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "28px" }}>
                 <div>
-                  <div className="eyebrow" style={{ marginBottom: "6px" }}>
-                    Booking Details
-                  </div>
-                  <div
-                    style={{
-                      fontFamily: "var(--font-d)",
-                      fontSize: "24px",
-                      color: "var(--teal)",
-                      fontWeight: 500,
-                    }}
-                  >
-                    {selected.bookingId}
-                  </div>
+                  <div className="eyebrow" style={{ marginBottom: "6px" }}>Booking Details</div>
+                  <div style={{ fontFamily: "var(--font-d)", fontSize: "24px", color: "var(--teal)", fontWeight: 500 }}>{selected.bookingId}</div>
                 </div>
-                <button
-                  onClick={() => setSelected(null)}
-                  style={{
-                    background: "none",
-                    border: "1.5px solid var(--parchment)",
-                    width: "36px",
-                    height: "36px",
-                    cursor: "none",
-                    fontSize: "16px",
-                    color: "var(--slate)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  ✕
-                </button>
+                <button onClick={() => setSelected(null)} style={{ background: "none", border: "1.5px solid var(--parchment)", width: "36px", height: "36px", cursor: "none", fontSize: "16px", color: "var(--slate)", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
               </div>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "10px",
-                }}
-              >
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
                 {[
                   ["Guest", selected.guestName],
                   ["Email", selected.email],
@@ -3701,139 +3447,65 @@ const AdminPanel = () => {
                   ["Adults", selected.adults],
                   ["Children", selected.children],
                   ["Status", selected.status],
-                  [
-                    "Booked On",
-                    new Date(selected.createdAt).toLocaleDateString(),
-                  ],
-                  [
-                    "Total Amount",
-                    `₹${calculateTotal(selected.roomType, selected.checkIn, selected.checkOut, selected.rooms).toLocaleString()}`,
-                  ],
+                  ["Booked On", new Date(selected.createdAt).toLocaleDateString()],
+                  ["Total Amount", `₹${calculateTotal(selected.roomType, selected.checkIn, selected.checkOut, selected.rooms).toLocaleString()}`],
                 ].map(([k, v]) => (
-                  <div
-                    key={k}
-                    style={{
-                      padding: "14px 16px",
-                      background: "var(--cream)",
-                      borderLeft: "2px solid var(--teal-pale)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "9px",
-                        letterSpacing: "2px",
-                        textTransform: "uppercase",
-                        color: "var(--champagne)",
-                        marginBottom: "5px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      {k}
-                    </div>
-                    <div
-                      style={{
-                        fontSize: "14px",
-                        color: "var(--ink)",
-                        fontWeight: 400,
-                        textTransform:
-                          k === "Room Type" ? "capitalize" : "none",
-                      }}
-                    >
-                      {v}
-                    </div>
+                  <div key={k} style={{ padding: "14px 16px", background: "var(--cream)", borderLeft: "2px solid var(--teal-pale)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--champagne)", marginBottom: "5px", fontWeight: 700 }}>{k}</div>
+                    <div style={{ fontSize: "14px", color: "var(--ink)", fontWeight: 400, textTransform: k === "Room Type" ? "capitalize" : "none" }}>{v}</div>
                   </div>
                 ))}
+
                 {selected.address && (
-                  <div
-                    style={{
-                      gridColumn: "span 2",
-                      padding: "14px 16px",
-                      background: "var(--cream)",
-                      borderLeft: "2px solid var(--teal-pale)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "9px",
-                        letterSpacing: "2px",
-                        textTransform: "uppercase",
-                        color: "var(--champagne)",
-                        marginBottom: "5px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      Address
-                    </div>
-                    <div style={{ fontSize: "14px", color: "var(--ink)" }}>
-                      {selected.address}
-                    </div>
+                  <div style={{ gridColumn: "span 2", padding: "14px 16px", background: "var(--cream)", borderLeft: "2px solid var(--teal-pale)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--champagne)", marginBottom: "5px", fontWeight: 700 }}>Address</div>
+                    <div style={{ fontSize: "14px", color: "var(--ink)" }}>{selected.address}</div>
                   </div>
                 )}
                 {selected.specialRequests && (
-                  <div
-                    style={{
-                      gridColumn: "span 2",
-                      padding: "14px 16px",
-                      background: "var(--teal-pale)",
-                      borderLeft: "2px solid var(--teal)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: "9px",
-                        letterSpacing: "2px",
-                        textTransform: "uppercase",
-                        color: "var(--teal)",
-                        marginBottom: "5px",
-                        fontWeight: 700,
-                      }}
-                    >
-                      Special Requests
-                    </div>
-                    <div
-                      style={{ fontSize: "14px", color: "var(--teal-dark)" }}
-                    >
-                      {selected.specialRequests}
-                    </div>
+                  <div style={{ gridColumn: "span 2", padding: "14px 16px", background: "var(--teal-pale)", borderLeft: "2px solid var(--teal)" }}>
+                    <div style={{ fontSize: "9px", letterSpacing: "2px", textTransform: "uppercase", color: "var(--teal)", marginBottom: "5px", fontWeight: 700 }}>Special Requests</div>
+                    <div style={{ fontSize: "14px", color: "var(--teal-dark)" }}>{selected.specialRequests}</div>
                   </div>
                 )}
-                {/* Cancel Booking Button */}
-                <div
-                  style={{
-                    gridColumn: "span 2",
-                    borderTop: "1px solid var(--parchment)",
-                    paddingTop: "24px",
-                    marginTop: "10px",
-                    display: "flex",
-                    justifyContent: "flex-end",
-                  }}
-                >
-                  <button
-                    onClick={() => cancelBooking(selected.bookingId)}
-                    style={{
-                      background: "#d93838",
-                      color: "var(--white)",
-                      border: "none",
-                      padding: "14px 28px",
-                      fontSize: "11px",
-                      fontWeight: 600,
-                      letterSpacing: "2px",
-                      textTransform: "uppercase",
-                      cursor: "none",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                      transition: "background 0.3s",
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.target.style.background = "#b92b2b")
-                    }
-                    onMouseLeave={(e) =>
-                      (e.target.style.background = "#d93838")
-                    }
-                  >
-                    ⚠️ Cancel & Delete Booking
-                  </button>
+
+                {/* ── Check-in / Check-out + Cancel buttons ── */}
+                <div style={{ gridColumn: "span 2", borderTop: "1px solid var(--parchment)", paddingTop: "24px", marginTop: "10px", display: "flex", flexDirection: "column", gap: "10px" }}>
+
+                  {/* Smart Check-in / Check-out row based on context */}
+                  <div style={{ display: "flex", gap: "10px" }}>
+                    {(selectedContext === "all" || selectedContext === "checkin") && (
+                      <button
+                        onClick={() => checkInOutBooking(selected.bookingId, "checkin")}
+                        disabled={selected.checkedIn}
+                        style={{ flex: 1, background: selected.checkedIn ? "rgba(42,157,78,0.12)" : "linear-gradient(135deg, var(--teal-dark), var(--teal))", color: selected.checkedIn ? "#2a9d4e" : "#fff", border: selected.checkedIn ? "1.5px solid rgba(42,157,78,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedIn ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                        onMouseEnter={(e) => { if (!selected.checkedIn) e.currentTarget.style.opacity = "0.85"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                        {selected.checkedIn ? "✅ Checked In" : "🛎 Mark Check-In"}
+                      </button>
+                    )}
+                    
+                    {(selectedContext === "all" || selectedContext === "checkout") && (
+                      <button
+                        onClick={() => checkInOutBooking(selected.bookingId, "checkout")}
+                        disabled={selected.checkedOut}
+                        style={{ flex: 1, background: selected.checkedOut ? "rgba(123,79,30,0.1)" : "linear-gradient(135deg, #7B4F1E, var(--champ-dk))", color: selected.checkedOut ? "var(--champ-dk)" : "#fff", border: selected.checkedOut ? "1.5px solid rgba(158,122,62,0.4)" : "none", padding: "13px 20px", fontSize: "11px", fontWeight: 600, letterSpacing: "1.5px", textTransform: "uppercase", cursor: selected.checkedOut ? "default" : "none", display: "flex", alignItems: "center", justifyContent: "center", gap: "8px", transition: "opacity 0.3s", borderRadius: "4px" }}
+                        onMouseEnter={(e) => { if (!selected.checkedOut) e.currentTarget.style.opacity = "0.85"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}>
+                        {selected.checkedOut ? "✅ Checked Out" : "🧳 Mark Check-Out"}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Cancel button */}
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "4px" }}>
+                    <button onClick={() => cancelBooking(selected.bookingId)}
+                      style={{ background: "#d93838", color: "var(--white)", border: "none", padding: "14px 28px", fontSize: "11px", fontWeight: 600, letterSpacing: "2px", textTransform: "uppercase", cursor: "none", display: "flex", alignItems: "center", gap: "8px", transition: "background 0.3s", borderRadius: "4px" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "#b92b2b")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "#d93838")}>
+                      ⚠️ Cancel & Delete Booking
+                    </button>
+                  </div>
                 </div>
               </div>
             </motion.div>

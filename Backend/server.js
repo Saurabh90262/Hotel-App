@@ -39,6 +39,9 @@ const bookingSchema = new mongoose.Schema({
   roomType: { type: String, enum: ["deluxe", "suite", "royal"], default: "deluxe" },
   specialRequests: { type: String },
   status: { type: String, enum: ["pending", "confirmed", "cancelled"], default: "confirmed" },
+  // Add inside bookingSchema, after the `status` field:
+checkedIn: { type: Boolean, default: false },
+checkedOut: { type: Boolean, default: false },
 }, { timestamps: true });
 const Booking = mongoose.model("Booking", bookingSchema);
 
@@ -382,7 +385,7 @@ app.patch("/api/admin/bookings/:id/status", authAdmin, async (req, res) => {
     const booking = await Booking.findOneAndUpdate(
       { bookingId: req.params.id },
       { status },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!booking) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, booking });
@@ -409,7 +412,44 @@ app.delete("/api/admin/bookings/:id", authAdmin, async (req, res) => {
     res.status(500).json({ success: false, message: "Server error" });
   }
 });
+// Get today's check-ins
+app.get("/api/admin/checkins/today", authAdmin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const bookings = await Booking.find({ checkIn: today }).sort({ createdAt: -1 });
+    res.json({ success: true, bookings });
+  } catch {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 
+// Get today's check-outs
+app.get("/api/admin/checkouts/today", authAdmin, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split("T")[0];
+    const bookings = await Booking.find({ checkOut: today }).sort({ createdAt: -1 });
+    res.json({ success: true, bookings });
+  } catch {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
+
+// Update check-in/check-out status
+app.patch("/api/admin/bookings/:id/checkinout", authAdmin, async (req, res) => {
+  try {
+    const { action } = req.body; // "checkin" or "checkout"
+    const field = action === "checkin" ? "checkedIn" : "checkedOut";
+    const booking = await Booking.findOneAndUpdate(
+      { bookingId: req.params.id },
+      { [field]: true },
+      { returnDocument: 'after' }
+    );
+    if (!booking) return res.status(404).json({ success: false, message: "Not found" });
+    res.json({ success: true, booking });
+  } catch {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+});
 /* ========================= AUTO-CLEANUP (CRON JOB) ========================= */
 const cron = require("node-cron");
 
