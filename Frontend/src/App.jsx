@@ -1,14 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { BrowserRouter, Routes, Route, Link } from "react-router-dom";
-import {
-  motion,
-  AnimatePresence,
-  useScroll,
-  useTransform,
-  useSpring,
-  useMotionValue,
-  useInView,
-} from "framer-motion";
+import { motion, AnimatePresence, useScroll, useTransform, useSpring, useMotionValue, useInView } from "framer-motion";
+
+// 👇 ADD THIS LINE 👇
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
 /* ─────────────────────────────────────────────
    GLOBAL STYLES  — Cream · Teal · Champagne
@@ -2413,7 +2408,7 @@ const BookingModal = ({ onClose, initialRoomType }) => {
     }
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/api/booking/send-otp", {
+      const res = await fetch(`${API_BASE_URL}/api/booking/send-otp`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form }),
@@ -2443,7 +2438,7 @@ const BookingModal = ({ onClose, initialRoomType }) => {
     if (otp.join("").length < 6) return alert("Enter the complete 6-digit OTP");
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/api/booking/confirm", {
+      const res = await fetch(`${API_BASE_URL}/api/booking/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, otp: otp.join("") }),
@@ -3064,7 +3059,7 @@ const AdminPanel = () => {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("http://localhost:5000/api/admin/login", {
+      const res = await fetch(`${API_BASE_URL}/api/admin/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(creds),
@@ -3086,7 +3081,7 @@ const AdminPanel = () => {
   const fetchBookings = async (token) => {
     setLoading(true);
     try {
-      const res = await fetch("http://localhost:5000/api/admin/bookings", {
+      const res = await fetch(`${API_BASE_URL}/api/admin/bookings`, {
         headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
       });
       const d = await res.json();
@@ -3097,7 +3092,7 @@ const AdminPanel = () => {
 
   const fetchTodayCheckins = async (token) => {
     try {
-      const res = await fetch("http://localhost:5000/api/admin/checkins/today", {
+      const res = await fetch(`${API_BASE_URL}/api/admin/checkins/today`, {
         headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
       });
       const d = await res.json();
@@ -3107,7 +3102,7 @@ const AdminPanel = () => {
 
   const fetchTodayCheckouts = async (token) => {
     try {
-      const res = await fetch("http://localhost:5000/api/admin/checkouts/today", {
+      const res = await fetch(`${API_BASE_URL}/api/admin/checkouts/today`, {
         headers: { Authorization: `Bearer ${token || localStorage.getItem("adminToken")}` },
       });
       const d = await res.json();
@@ -3118,7 +3113,7 @@ const AdminPanel = () => {
   const cancelBooking = async (bookingId) => {
     if (!window.confirm(`⚠️ Cancel booking ${bookingId}? This will cancel the reservation and email an apology.`)) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/bookings/${bookingId}`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/bookings/${bookingId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("adminToken")}` },
       });
@@ -3141,7 +3136,7 @@ const AdminPanel = () => {
     const label = action === "checkin" ? "Check-In" : "Check-Out";
     if (!window.confirm(`Confirm ${label} for booking ${bookingId}?`)) return;
     try {
-      const res = await fetch(`http://localhost:5000/api/admin/bookings/${bookingId}/checkinout`, {
+      const res = await fetch(`${API_BASE_URL}/api/admin/bookings/${bookingId}/checkinout`, {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
